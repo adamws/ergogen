@@ -77,63 +77,34 @@ exports.serialize = (points, logger) => {
     // Create a new Keyboard object
     const keyboard = new kle.Keyboard()
 
-    // Detect ergogen's unit system by finding the most common key size
-    // Default ergogen units: width=18, height=18, padding=19
-    let defaultWidth = 18
-    let defaultHeight = 18
-    let unitSize = 19 // default padding/spread, used as 1U in KLE
+    // Detect ergogen's unit system
+    // Ergogen differentiates between keycap size (width/height) and spacing (padding/spread)
+    // Default: width=18, height=18, padding=19
 
-    // Find the most common width/height to use as the standard 1U size
-    const widths = []
-    const heights = []
+    // Find spacing unit from the points (should be consistent across the layout)
+    let spacingUnit = 19 // default padding/spread
     for (const point of Object.values(points)) {
-        if (point.meta) {
-            if (point.meta.width !== undefined) {
-                widths.push(point.meta.width)
-            }
-            if (point.meta.height !== undefined) {
-                heights.push(point.meta.height)
-            }
-            // Use padding from any point (should be consistent)
-            if (point.meta.padding !== undefined) {
-                unitSize = point.meta.padding
-            }
+        if (point.meta && point.meta.padding !== undefined) {
+            spacingUnit = point.meta.padding
+            break
         }
     }
 
-    // Find the standard 1U key size
-    // Prefer 18 (ergogen's default) if it exists, otherwise use most common
-    if (widths.length > 0) {
-        const widthCounts = {}
-        for (const w of widths) {
-            widthCounts[w] = (widthCounts[w] || 0) + 1
-        }
-        // If ergogen's default (18) exists in the widths, use it
-        if (widthCounts[18]) {
-            defaultWidth = 18
-        } else {
-            // Otherwise use the most common width
-            defaultWidth = Number(Object.keys(widthCounts).reduce((a, b) =>
-                widthCounts[a] > widthCounts[b] ? a : b
-            ))
-        }
-    }
+    // The standard key size is typically (spacing - 1)
+    // This accounts for the 1-unit gap between keys in ergogen
+    const standardKeySize = spacingUnit - 1 // typically 18 when spacing is 19
 
-    // Find the standard 1U key height
-    if (heights.length > 0) {
-        const heightCounts = {}
-        for (const h of heights) {
-            heightCounts[h] = (heightCounts[h] || 0) + 1
-        }
-        // If ergogen's default (18) exists in the heights, use it
-        if (heightCounts[18]) {
-            defaultHeight = 18
-        } else {
-            // Otherwise use the most common height
-            defaultHeight = Number(Object.keys(heightCounts).reduce((a, b) =>
-                heightCounts[a] > heightCounts[b] ? a : b
-            ))
-        }
+    // KLE uses a unified "U" unit system:
+    // - For POSITIONS: use spacing unit (the grid)
+    // - For DIMENSIONS: use standard key size (so 18-unit keys become 1U)
+
+    const normalizePosition = (value) => value / spacingUnit
+    const normalizeDimension = (value) => {
+        const normalized = value / standardKeySize
+        // Round to nearest 0.25U for cleaner output
+        // This handles floating point precision issues
+        const rounded = Math.round(normalized * 4) / 4
+        return rounded
     }
 
     // Convert ergogen points to KLE keys
@@ -177,30 +148,48 @@ exports.serialize = (points, logger) => {
         for (const point of group) {
             const key = new kle.Key()
 
-            // Get key dimensions, using defaults if not specified
-            const keyWidth = point.meta.width !== undefined ? point.meta.width : defaultWidth
-            const keyHeight = point.meta.height !== undefined ? point.meta.height : defaultHeight
+            // Get key dimensions from metadata (default to standardKeySize if not specified)
+            const keyWidth = point.meta.width !== undefined ? point.meta.width : standardKeySize
+            const keyHeight = point.meta.height !== undefined ? point.meta.height : standardKeySize
 
-            // Normalize to KLE units (where 1U = standard key size)
-            // In ergogen, default key is 18 units, which should map to 1.0 in KLE
-            const width = keyWidth / defaultWidth
-            const height = keyHeight / defaultHeight
+            // Normalize dimensions to KLE units (18 → 1U, 36 → 2U, etc.)
+            const width = normalizeDimension(keyWidth)
+            const height = normalizeDimension(keyHeight)
 
             key.width = width
             key.height = height
 
-            // Convert positions to KLE units
-            // Use unitSize (padding) as the reference for 1U spacing
-            key.x = point.x / unitSize - (width - 1) / 2
-            key.y = -point.y / unitSize - (height - 1) / 2 // Flip Y axis
-
             // Handle rotation
             if (point.r !== 0) {
                 key.rotation_angle = -point.r // Flip rotation direction
-                // For KLE, rotation origin is where the key rotates around
-                // Use the key's position as the rotation origin
-                key.rotation_x = key.x + 0.5
-                key.rotation_y = key.y + 0.5
+
+                // Get the rotation origin from ergogen's metadata
+                // In ergogen, origin is the offset from key center where rotation happens
+                let originX = 0
+                let originY = 0
+                if (point.meta.origin && Array.isArray(point.meta.origin)) {
+                    originX = point.meta.origin[0] || 0
+                    originY = point.meta.origin[1] || 0
+                }
+
+                // Calculate the absolute rotation origin in ergogen coordinates
+                // The rotation happens at (key_position + origin_offset)
+                const rotOriginAbsX = point.x + originX
+                const rotOriginAbsY = point.y + originY
+
+                // Convert rotation origin to KLE units (using position normalization)
+                key.rotation_x = normalizePosition(rotOriginAbsX)
+                key.rotation_y = normalizePosition(-rotOriginAbsY) // Flip Y axis
+
+                // Key position is relative to the rotation origin in KLE
+                // offset = key_position - rotation_origin
+                key.x = normalizePosition(-originX) - (width - 1) / 2
+                key.y = normalizePosition(originY) - (height - 1) / 2
+            } else {
+                // For non-rotated keys, use absolute position
+                // Convert positions to KLE units (using position normalization)
+                key.x = normalizePosition(point.x) - (width - 1) / 2
+                key.y = normalizePosition(-point.y) - (height - 1) / 2 // Flip Y axis
             }
 
             // Set label if available
@@ -208,6 +197,55 @@ exports.serialize = (points, logger) => {
             key.labels[0] = label
 
             keyboard.keys.push(key)
+        }
+    }
+
+    // Normalize positions: offset everything so the minimum x and y are at 0
+    // This makes the layout start at the origin, which is more intuitive
+    if (keyboard.keys.length > 0) {
+        // Find minimum x and y across all keys
+        let minX = Infinity
+        let minY = Infinity
+
+        for (const key of keyboard.keys) {
+            // For rotated keys, we need to consider the rotation origin
+            const x = key.rotation_angle !== 0 ? key.rotation_x : key.x
+            const y = key.rotation_angle !== 0 ? key.rotation_y : key.y
+
+            if (x < minX) minX = x
+            if (y < minY) minY = y
+        }
+
+        // Offset all keys by the minimum values
+        for (const key of keyboard.keys) {
+            if (key.rotation_angle !== 0) {
+                // For rotated keys, offset only the rotation origin
+                // The x, y values are relative to the rotation origin, so leave them alone
+                key.rotation_x -= minX
+                key.rotation_y -= minY
+            } else {
+                // For non-rotated keys, offset the position
+                key.x -= minX
+                key.y -= minY
+            }
+
+            // Round all positions to 3 decimal places for cleaner output
+            key.x = Math.round(key.x * 1000) / 1000
+            key.y = Math.round(key.y * 1000) / 1000
+            if (key.rotation_x !== undefined) {
+                key.rotation_x = Math.round(key.rotation_x * 1000) / 1000
+            }
+            if (key.rotation_y !== undefined) {
+                key.rotation_y = Math.round(key.rotation_y * 1000) / 1000
+            }
+
+            // Round dimensions to 3 decimal places
+            if (key.width !== 1) {
+                key.width = Math.round(key.width * 1000) / 1000
+            }
+            if (key.height !== 1) {
+                key.height = Math.round(key.height * 1000) / 1000
+            }
         }
     }
 
