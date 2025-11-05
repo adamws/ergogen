@@ -10,6 +10,7 @@ const jszip = require('jszip')
 const io = require('./io')
 const pkg = require('../package.json')
 const ergogen = require('./ergogen')
+const kle = require('./kle')
 
 ;(async () => {
 
@@ -37,6 +38,11 @@ const args = yargs
         alias: 'generate-svg',
         default: false,
         describe: 'Generate SVG outputs',
+        type: 'boolean'
+    })
+    .option('to-kle', {
+        default: false,
+        describe: 'Export points to KLE format',
         type: 'boolean'
     })
     .argv
@@ -200,6 +206,21 @@ for (const [name, _case] of Object.entries(results.cases)) {
 
 for (const [name, pcb] of Object.entries(results.pcbs)) {
     single(pcb, `pcbs/${name}.kicad_pcb`)
+}
+
+// KLE export if requested
+if (args['to-kle'] && results.points) {
+    console.log('Exporting to KLE format...')
+    try {
+        const kleOutput = kle.serialize(results.points, s => console.log(s))
+        const kleFile = path.join(args.o, 'points', 'kle.json')
+        fs.mkdirpSync(path.dirname(kleFile))
+        fs.writeFileSync(kleFile, JSON.stringify(kleOutput, null, 2))
+        console.log(`KLE format written to ${kleFile}`)
+    } catch (err) {
+        console.error('Error exporting to KLE format:')
+        console.error(err)
+    }
 }
 
 // goodbye
