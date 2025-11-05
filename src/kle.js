@@ -77,6 +77,65 @@ exports.serialize = (points, logger) => {
     // Create a new Keyboard object
     const keyboard = new kle.Keyboard()
 
+    // Detect ergogen's unit system by finding the most common key size
+    // Default ergogen units: width=18, height=18, padding=19
+    let defaultWidth = 18
+    let defaultHeight = 18
+    let unitSize = 19 // default padding/spread, used as 1U in KLE
+
+    // Find the most common width/height to use as the standard 1U size
+    const widths = []
+    const heights = []
+    for (const point of Object.values(points)) {
+        if (point.meta) {
+            if (point.meta.width !== undefined) {
+                widths.push(point.meta.width)
+            }
+            if (point.meta.height !== undefined) {
+                heights.push(point.meta.height)
+            }
+            // Use padding from any point (should be consistent)
+            if (point.meta.padding !== undefined) {
+                unitSize = point.meta.padding
+            }
+        }
+    }
+
+    // Find the standard 1U key size
+    // Prefer 18 (ergogen's default) if it exists, otherwise use most common
+    if (widths.length > 0) {
+        const widthCounts = {}
+        for (const w of widths) {
+            widthCounts[w] = (widthCounts[w] || 0) + 1
+        }
+        // If ergogen's default (18) exists in the widths, use it
+        if (widthCounts[18]) {
+            defaultWidth = 18
+        } else {
+            // Otherwise use the most common width
+            defaultWidth = Number(Object.keys(widthCounts).reduce((a, b) =>
+                widthCounts[a] > widthCounts[b] ? a : b
+            ))
+        }
+    }
+
+    // Find the standard 1U key height
+    if (heights.length > 0) {
+        const heightCounts = {}
+        for (const h of heights) {
+            heightCounts[h] = (heightCounts[h] || 0) + 1
+        }
+        // If ergogen's default (18) exists in the heights, use it
+        if (heightCounts[18]) {
+            defaultHeight = 18
+        } else {
+            // Otherwise use the most common height
+            defaultHeight = Number(Object.keys(heightCounts).reduce((a, b) =>
+                heightCounts[a] > heightCounts[b] ? a : b
+            ))
+        }
+    }
+
     // Convert ergogen points to KLE keys
     // Points is an object where each key is a point name and value contains x, y, r, meta
     const pointsArray = Object.entries(points).map(([name, point]) => {
@@ -118,17 +177,22 @@ exports.serialize = (points, logger) => {
         for (const point of group) {
             const key = new kle.Key()
 
-            // Convert ergogen center-based coordinates to KLE corner-based
-            // Ergogen uses center coordinates, KLE uses top-left corner
-            const width = point.meta.width !== undefined ? point.meta.width / 19 : 1
-            const height = point.meta.height !== undefined ? point.meta.height / 19 : 1
+            // Get key dimensions, using defaults if not specified
+            const keyWidth = point.meta.width !== undefined ? point.meta.width : defaultWidth
+            const keyHeight = point.meta.height !== undefined ? point.meta.height : defaultHeight
+
+            // Normalize to KLE units (where 1U = standard key size)
+            // In ergogen, default key is 18 units, which should map to 1.0 in KLE
+            const width = keyWidth / defaultWidth
+            const height = keyHeight / defaultHeight
 
             key.width = width
             key.height = height
 
-            // Adjust position to corner (KLE expects top-left corner position)
-            key.x = point.x / 19 - (width - 1) / 2
-            key.y = -point.y / 19 - (height - 1) / 2 // Flip Y axis
+            // Convert positions to KLE units
+            // Use unitSize (padding) as the reference for 1U spacing
+            key.x = point.x / unitSize - (width - 1) / 2
+            key.y = -point.y / unitSize - (height - 1) / 2 // Flip Y axis
 
             // Handle rotation
             if (point.r !== 0) {
