@@ -77,34 +77,85 @@ exports.serialize = (points, logger) => {
     // Create a new Keyboard object
     const keyboard = new kle.Keyboard()
 
-    // Detect ergogen's unit system
-    // Ergogen differentiates between keycap size (width/height) and spacing (padding/spread)
-    // Default: width=18, height=18, padding=19
+    // Detect ergogen's unit system from the actual point data
+    // Users can customize units, so we need to detect both spacing and key size independently
 
-    // Find spacing unit from the points (should be consistent across the layout)
-    let spacingUnit = 19 // default padding/spread
+    // Default ergogen units (can be customized):
+    // - $default_width: 'u-1' (typically 18)
+    // - $default_height: 'u-1' (typically 18)
+    // - $default_padding: 'u' (typically 19)
+    // - $default_spread: 'u' (typically 19)
+
+    // Collect all width, height, and padding values from points
+    const widths = []
+    const heights = []
+    const paddings = []
+
     for (const point of Object.values(points)) {
-        if (point.meta && point.meta.padding !== undefined) {
-            spacingUnit = point.meta.padding
-            break
+        if (point.meta) {
+            if (point.meta.width !== undefined) {
+                widths.push(point.meta.width)
+            }
+            if (point.meta.height !== undefined) {
+                heights.push(point.meta.height)
+            }
+            if (point.meta.padding !== undefined) {
+                paddings.push(point.meta.padding)
+            }
         }
     }
 
-    // The standard key size is typically (spacing - 1)
-    // This accounts for the 1-unit gap between keys in ergogen
-    const standardKeySize = spacingUnit - 1 // typically 18 when spacing is 19
+    // Find most common width (this is the standard key size)
+    let standardWidth = 18 // default fallback
+    if (widths.length > 0) {
+        const widthCounts = {}
+        for (const w of widths) {
+            widthCounts[w] = (widthCounts[w] || 0) + 1
+        }
+        standardWidth = Number(Object.keys(widthCounts).reduce((a, b) =>
+            widthCounts[a] > widthCounts[b] ? a : b
+        ))
+    }
+
+    // Find most common height (this is the standard key height)
+    let standardHeight = 18 // default fallback
+    if (heights.length > 0) {
+        const heightCounts = {}
+        for (const h of heights) {
+            heightCounts[h] = (heightCounts[h] || 0) + 1
+        }
+        standardHeight = Number(Object.keys(heightCounts).reduce((a, b) =>
+            heightCounts[a] > heightCounts[b] ? a : b
+        ))
+    }
+
+    // Find most common padding (this is the spacing unit)
+    let spacingUnit = 19 // default fallback
+    if (paddings.length > 0) {
+        const paddingCounts = {}
+        for (const p of paddings) {
+            paddingCounts[p] = (paddingCounts[p] || 0) + 1
+        }
+        spacingUnit = Number(Object.keys(paddingCounts).reduce((a, b) =>
+            paddingCounts[a] > paddingCounts[b] ? a : b
+        ))
+    }
 
     // KLE uses a unified "U" unit system:
-    // - For POSITIONS: use spacing unit (the grid)
-    // - For DIMENSIONS: use standard key size (so 18-unit keys become 1U)
+    // - For POSITIONS: use spacing unit (the grid/padding)
+    // - For WIDTH: use standard width (most common key width)
+    // - For HEIGHT: use standard height (most common key height)
 
     const normalizePosition = (value) => value / spacingUnit
-    const normalizeDimension = (value) => {
-        const normalized = value / standardKeySize
+    const normalizeWidth = (value) => {
+        const normalized = value / standardWidth
         // Round to nearest 0.25U for cleaner output
-        // This handles floating point precision issues
-        const rounded = Math.round(normalized * 4) / 4
-        return rounded
+        return Math.round(normalized * 4) / 4
+    }
+    const normalizeHeight = (value) => {
+        const normalized = value / standardHeight
+        // Round to nearest 0.25U for cleaner output
+        return Math.round(normalized * 4) / 4
     }
 
     // Convert ergogen points to KLE keys
@@ -148,13 +199,13 @@ exports.serialize = (points, logger) => {
         for (const point of group) {
             const key = new kle.Key()
 
-            // Get key dimensions from metadata (default to standardKeySize if not specified)
-            const keyWidth = point.meta.width !== undefined ? point.meta.width : standardKeySize
-            const keyHeight = point.meta.height !== undefined ? point.meta.height : standardKeySize
+            // Get key dimensions from metadata (default to standard sizes if not specified)
+            const keyWidth = point.meta.width !== undefined ? point.meta.width : standardWidth
+            const keyHeight = point.meta.height !== undefined ? point.meta.height : standardHeight
 
-            // Normalize dimensions to KLE units (18 → 1U, 36 → 2U, etc.)
-            const width = normalizeDimension(keyWidth)
-            const height = normalizeDimension(keyHeight)
+            // Normalize dimensions to KLE units (standard → 1U, 2x standard → 2U, etc.)
+            const width = normalizeWidth(keyWidth)
+            const height = normalizeHeight(keyHeight)
 
             key.width = width
             key.height = height
