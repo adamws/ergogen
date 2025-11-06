@@ -105,9 +105,22 @@ exports.serialize = (points, logger) => {
         }
     }
 
+    // Find most common padding (this is the spacing unit) - do this FIRST
+    let spacingUnit = 19 // default fallback
+    if (paddings.length > 0) {
+        const paddingCounts = {}
+        for (const p of paddings) {
+            paddingCounts[p] = (paddingCounts[p] || 0) + 1
+        }
+        spacingUnit = Number(Object.keys(paddingCounts).reduce((a, b) =>
+            paddingCounts[a] > paddingCounts[b] ? a : b
+        ))
+    }
+
     // Find most common width (this is the standard key size)
-    let standardWidth = 18 // default fallback
-    if (widths.length > 0) {
+    // For keyboards with few keys, default to (spacing - 1) which is ergogen's standard
+    let standardWidth = spacingUnit > 1 ? spacingUnit - 1 : 18
+    if (widths.length >= 2) { // Need at least 2 keys to reliably determine standard
         const widthCounts = {}
         for (const w of widths) {
             widthCounts[w] = (widthCounts[w] || 0) + 1
@@ -118,26 +131,14 @@ exports.serialize = (points, logger) => {
     }
 
     // Find most common height (this is the standard key height)
-    let standardHeight = 18 // default fallback
-    if (heights.length > 0) {
+    let standardHeight = spacingUnit > 1 ? spacingUnit - 1 : 18
+    if (heights.length >= 2) {
         const heightCounts = {}
         for (const h of heights) {
             heightCounts[h] = (heightCounts[h] || 0) + 1
         }
         standardHeight = Number(Object.keys(heightCounts).reduce((a, b) =>
             heightCounts[a] > heightCounts[b] ? a : b
-        ))
-    }
-
-    // Find most common padding (this is the spacing unit)
-    let spacingUnit = 19 // default fallback
-    if (paddings.length > 0) {
-        const paddingCounts = {}
-        for (const p of paddings) {
-            paddingCounts[p] = (paddingCounts[p] || 0) + 1
-        }
-        spacingUnit = Number(Object.keys(paddingCounts).reduce((a, b) =>
-            paddingCounts[a] > paddingCounts[b] ? a : b
         ))
     }
 
